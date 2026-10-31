@@ -1,0 +1,15 @@
+package in.smartgatekeeper.gatekeeper.api_management_service.repository;
+
+import in.smartgatekeeper.gatekeeper.api_management_service.entity.ManagementUser;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.Optional;
+
+public interface ManagementUserRepository extends JpaRepository<ManagementUser, Long> {
+
+    Optional<ManagementUser> findByUsername(String  userName);
+
+    Optional<ManagementUser> findByOrganizationId(Long organizationId);
+
+    boolean existsByUsername(String username);
+}
