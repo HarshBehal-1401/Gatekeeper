@@ -3,6 +3,7 @@ package in.smartgatekeeper.gatekeeper.api_management_service.service;
 import in.smartgatekeeper.gatekeeper.api_management_service.dto.requestdto.OrganizationRequest;
 import in.smartgatekeeper.gatekeeper.api_management_service.dto.requestdto.OrganizationStatusRequest;
 import in.smartgatekeeper.gatekeeper.api_management_service.dto.requestdto.TenantAdminRequest;
+import in.smartgatekeeper.gatekeeper.api_management_service.dto.requestdto.TenantOrganizationRequest;
 import in.smartgatekeeper.gatekeeper.api_management_service.dto.responsedto.OrganizationResponse;
 import in.smartgatekeeper.gatekeeper.api_management_service.dto.responsedto.TenantAdminResponse;
 import in.smartgatekeeper.gatekeeper.api_management_service.entity.ManagementUser;
@@ -24,20 +25,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Service
-public class OrganizationService {
-
-    private final OrganizationRepository organizationRepository;
+public class OrganizationService {private final OrganizationRepository organizationRepository;
     private final ManagementUserRepository managementUserRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final TenantContext tenantContext;
+    private final AuditService auditService;
 
     public OrganizationService(OrganizationRepository organizationRepository,
-                               ManagementUserRepository managementUserRepository,
-                               RoleRepository roleRepository, PasswordEncoder passwordEncoder) {
+                               ManagementUserRepository managementUserRepository, RoleRepository roleRepository,
+                               PasswordEncoder passwordEncoder, TenantContext tenantContext,
+                               AuditService auditService) {
         this.organizationRepository = organizationRepository;
         this.managementUserRepository = managementUserRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
+        this.tenantContext = tenantContext;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -55,6 +59,10 @@ public class OrganizationService {
 
         organizationRepository.save(organization);
 
+        auditService.record(organization, "CREATE_ORGANIZATION", "ORGANIZATION",
+                organization.getId().toString(), startedAt,
+                "Organization created in PENDING status");
+
         return OrganizationResponse.from(organization);
     }
 
@@ -71,84 +79,56 @@ public class OrganizationService {
 
     @Transactional(readOnly = true)
     public OrganizationResponse findById(Long id) {
-
-        Organization organization = getOrganization(id);
-
-        return OrganizationResponse.from(organization);
+        return OrganizationResponse.from(getOrganization(id));
     }
 
     @Transactional
     public OrganizationResponse update(Long id, OrganizationRequest request) {
-
+        long startedAt = System.nanoTime();
         Organization organization = getOrganization(id);
-
         checkUnique(request.getName(), request.getSlug(), id);
-
         organization.setName(request.getName());
         organization.setSlug(request.getSlug());
         organization.setUpdatedAt(LocalDateTime.now());
 
+        auditService.record(organization, "UPDATE_ORGANIZATION",
+                "ORGANIZATION", id.toString(), startedAt,
+                "Organization name and slug updated");
+
         return OrganizationResponse.from(organization);
     }
 
-    // 5. Change Organization Status
     @Transactional
-    public OrganizationResponse changeStatus(
-            Long id,
-            OrganizationStatusRequest request) {
+    public OrganizationResponse changeStatus(Long id, OrganizationStatusRequest request) {
 
+        long startedAt = System.nanoTime();
         Organization organization = getOrganization(id);
 
-        if (request.getStatus() == null) {
-            throw new ApiException(
-                    HttpStatus.BAD_REQUEST,
-                    "Organization status cannot be null"
-            );
-        }
-
-        if (request.getStatus().equals(OrganizationStatus.DELETED)) {
-            throw new ApiException(
-                    HttpStatus.BAD_REQUEST,
-                    "Use DELETE to soft-delete an organization"
-            );
+        if(request.getStatus() == OrganizationStatus.DELETED) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Use DELETE to soft-delete an organization");
         }
 
         organization.setStatus(request.getStatus());
         organization.setUpdatedAt(LocalDateTime.now());
+        auditService.record(organization, "CHANGE_ORGANIZATION_STATUS",
+                "ORGANIZATION", id.toString(),
+                startedAt, "Status changed to " + request.getStatus());
 
         return OrganizationResponse.from(organization);
     }
 
-    // 6. Soft Delete Organization
     @Transactional
     public void delete(Long id) {
+        long startedAt = System.nanoTime();
 
         Organization organization = getOrganization(id);
-
-        LocalDateTime now = LocalDateTime.now();
-
         organization.setStatus(OrganizationStatus.DELETED);
-        organization.setDeletedAt(now);
-        organization.setUpdatedAt(now);
-    }
+        organization.setDeletedAt(LocalDateTime.now());
+        organization.setUpdatedAt(LocalDateTime.now());
 
-    // Find Organization or Throw Exception
-    private Organization getOrganization(Long id) {
-
-        Organization organization = organizationRepository.findById(id)
-                .orElseThrow(() -> new ApiException(
-                        HttpStatus.NOT_FOUND,
-                        "Organization not found with ID: " + id
-                ));
-
-        if (organization.getStatus() == OrganizationStatus.DELETED) {
-            throw new ApiException(
-                    HttpStatus.NOT_FOUND,
-                    "Organization not found with ID: " + id
-            );
-        }
-
-        return organization;
+        auditService.record(organization, "DELETE_ORGANIZATION",
+                "ORGANIZATION", id.toString(), startedAt,
+                "Organization soft-deleted");
     }
 
     @Transactional
@@ -157,8 +137,7 @@ public class OrganizationService {
         Organization organization = getOrganization(organizationId);
 
         if(managementUserRepository.findByOrganizationId(organizationId).isPresent()) {
-            throw new ApiException(HttpStatus.CONFLICT,
-                    "This organization already has a tenant administrator");
+            throw new ApiException(HttpStatus.CONFLICT, "This organization already has a tenant administrator");
         }
 
         if(managementUserRepository.existsByUsername(request.getUsername())) {
@@ -178,6 +157,10 @@ public class OrganizationService {
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         managementUserRepository.save(user);
+
+        auditService.record(organization, "CREATE_TENANT_ADMIN",
+                "MANAGEMENT_USER", user.getId().toString(),
+                startedAt, "Tenant administrator created");
 
         return TenantAdminResponse.from(user);
     }
@@ -202,6 +185,10 @@ public class OrganizationService {
         user.setEnabled(request.isEnabled());
         user.setUpdatedAt(LocalDateTime.now());
 
+        auditService.record(user.getOrganization(), "UPDATE_TENANT_ADMIN",
+                "MANAGEMENT_USER", user.getId().toString(), startedAt,
+                "Tenant administrator updated");
+
         return TenantAdminResponse.from(user);
     }
 
@@ -211,7 +198,42 @@ public class OrganizationService {
 
         ManagementUser user = getTenantAdminEntity(organizationId);
 
+        auditService.record(user.getOrganization(), "DELETE_TENANT_ADMIN",
+                "MANAGEMENT_USER", user.getId().toString(), startedAt,
+                "Tenant administrator deleted");
+
         managementUserRepository.delete(user);
+    }
+
+    @Transactional(readOnly = true)
+    public OrganizationResponse getOwnOrganization() {
+        return OrganizationResponse.from(tenantContext.getOrganization());
+    }
+
+    @Transactional
+    public OrganizationResponse updateOwnOrganization(TenantOrganizationRequest request) {
+        long startedAt = System.nanoTime();
+
+        Organization organization = tenantContext.getOrganization();
+
+        if(!organization.getName().equalsIgnoreCase(request.getName())
+                && organizationRepository.existsByNameIgnoreCase(request.getName())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Organization name already exists");
+        }
+
+        organization.setName(request.getName());
+        organization.setUpdatedAt(LocalDateTime.now());
+
+        auditService.record(organization, "UPDATE_OWN_ORGANIZATION",
+                "ORGANIZATION", organization.getId().toString(), startedAt,
+                "Tenant updated its organization name");
+
+        return OrganizationResponse.from(organization);
+    }
+
+    private Organization getOrganization(Long id) {
+        return organizationRepository.findByIdAndStatusNot(id, OrganizationStatus.DELETED)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Organization not found"));
     }
 
     private ManagementUser getTenantAdminEntity(Long organizationId) {
@@ -219,7 +241,6 @@ public class OrganizationService {
         return managementUserRepository.findByOrganizationId(organizationId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Tenant administrator not found"));
     }
-
 
     private void checkUnique(String name, String slug, Long currentId) {
         if(organizationRepository.existsByNameIgnoreCase(name)) {

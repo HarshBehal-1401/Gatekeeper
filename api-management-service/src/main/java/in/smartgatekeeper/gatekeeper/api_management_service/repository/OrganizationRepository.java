@@ -6,16 +6,15 @@ import in.smartgatekeeper.gatekeeper.api_management_service.entity.OrganizationS
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface OrganizationRepository extends JpaRepository<Organization, Long> {
     boolean existsByNameIgnoreCase(String name);
 
     boolean existsBySlugIgnoreCase(String slug);
 
-    boolean existsByNameIgnoreCaseAndIdNot(String name, Long id);
+    List<Organization> findAllByStatusNot(OrganizationStatus status);
 
-    boolean existsBySlugIgnoreCaseAndIdNot(String slug, Long id);
-
-    List<Organization> findAllByStatusNot(OrganizationStatus organizationStatus);
+    Optional<Organization> findByIdAndStatusNot(Long id, OrganizationStatus status);
 
 }
