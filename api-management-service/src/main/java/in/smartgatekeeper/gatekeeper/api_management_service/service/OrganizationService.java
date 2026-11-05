@@ -10,6 +10,7 @@ import in.smartgatekeeper.gatekeeper.api_management_service.entity.ManagementUse
 import in.smartgatekeeper.gatekeeper.api_management_service.entity.Organization;
 import in.smartgatekeeper.gatekeeper.api_management_service.entity.OrganizationStatus;
 import in.smartgatekeeper.gatekeeper.api_management_service.entity.Role;
+import in.smartgatekeeper.gatekeeper.api_management_service.event.GatewayConfigurationEventService;
 import in.smartgatekeeper.gatekeeper.api_management_service.exception.ApiException;
 import in.smartgatekeeper.gatekeeper.api_management_service.repository.ManagementUserRepository;
 import in.smartgatekeeper.gatekeeper.api_management_service.repository.OrganizationRepository;
@@ -31,17 +32,20 @@ public class OrganizationService {private final OrganizationRepository organizat
     private final PasswordEncoder passwordEncoder;
     private final TenantContext tenantContext;
     private final AuditService auditService;
+    private final GatewayConfigurationEventService configurationEventService;
+
 
     public OrganizationService(OrganizationRepository organizationRepository,
                                ManagementUserRepository managementUserRepository, RoleRepository roleRepository,
                                PasswordEncoder passwordEncoder, TenantContext tenantContext,
-                               AuditService auditService) {
+                               AuditService auditService,GatewayConfigurationEventService configurationEventService) {
         this.organizationRepository = organizationRepository;
         this.managementUserRepository = managementUserRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.tenantContext = tenantContext;
         this.auditService = auditService;
+        this.configurationEventService = configurationEventService;
     }
 
     @Transactional
@@ -94,6 +98,8 @@ public class OrganizationService {private final OrganizationRepository organizat
         auditService.record(organization, "UPDATE_ORGANIZATION",
                 "ORGANIZATION", id.toString(), startedAt,
                 "Organization name and slug updated");
+
+        configurationEventService.publish("ORGANIZATION_UPDATED", organization.getId(), null,null);
 
         return OrganizationResponse.from(organization);
     }
